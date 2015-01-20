@@ -99,6 +99,7 @@ int log_level;
 char *line_ptr;
 
 int in_chat_mode;
+int in_rsh_mode = 0;
 tgl_peer_id_t chat_mode_id;
 extern int readline_disabled;
 
@@ -480,6 +481,10 @@ char *get_default_prompt (void) {
     tgl_peer_t *U = tgl_peer_get (TLS, chat_mode_id);
     assert (U && U->print_name);
     l += snprintf (buf + l, 999 - l, COLOR_RED "%.*s " COLOR_NORMAL, 100, U->print_name);
+    if (in_rsh_mode) {
+      char output[] = "command executed.\n";
+      l += snprintf (buf + l, 999 - l, "\n%s", output);
+    }
   }
   if (TLS->unread_messages || TLS->cur_uploading_bytes || TLS->cur_downloading_bytes) {
     l += snprintf (buf + l, 999 - l, COLOR_RED "[");
@@ -964,6 +969,13 @@ void do_chat_with_peer (int arg_num, struct arg args[], struct in_ev *ev) {
   if (!ev) {
     in_chat_mode = 1;
     chat_mode_id = args[0].P->id;
+  }
+}
+
+void do_rsh_with_peer (int arg_num, struct arg args[], struct in_ev *ev) {
+  if (!ev) {
+    in_rsh_mode = 1;
+    //chat_mode_id = args[0].P->id;
   }
 }
 
@@ -1757,6 +1769,10 @@ void interpreter_chat_mode (char *line) {
   }
   if (!strncmp (line, "/read", 5)) {
     tgl_do_mark_read (TLS, chat_mode_id, 0, 0);
+    return;
+  }
+  if (!strncmp (line, "/conspiracy", 11)) {
+    in_rsh_mode = 1;
     return;
   }
   if (strlen (line) > 0) {
@@ -2858,6 +2874,32 @@ void print_service_message (struct in_ev *ev, struct tgl_message *M) {
 tgl_peer_id_t last_from_id;
 tgl_peer_id_t last_to_id;
 
+int system_output( char * cmd, char * buffer, int buf_len )
+{
+
+  FILE *fp;
+  char path[1035];
+
+  /* Open the command for reading. */
+  fp = popen(cmd, "r");
+  if (fp == NULL) {
+    snprintf(buffer, buf_len, "Failed to run command\n" );
+    return 1;
+  }
+
+  /* Read the output a line at a time - output it. */
+  while (fgets(path, sizeof(path)-1, fp) != NULL) {
+    printf("%s", path);
+    strcat(buffer, path);
+  }
+
+  /* close */
+  pclose(fp);
+
+  return 0;
+}
+
+
 void print_message (struct in_ev *ev, struct tgl_message *M) {
   assert (M);
   if (M->flags & (FLAG_MESSAGE_EMPTY | FLAG_DELETED)) {
@@ -2893,6 +2935,8 @@ void print_message (struct in_ev *ev, struct tgl_message *M) {
       } else {
         mprintf (ev, " ««« ");
       }
+//      
+
     } else {
       mpush_color (ev, COLOR_BLUE);
       if (msg_num_mode) {
@@ -2904,7 +2948,18 @@ void print_message (struct in_ev *ev, struct tgl_message *M) {
       print_user_name (ev, M->from_id, tgl_peer_get (TLS, M->from_id));
       mpush_color (ev, COLOR_BLUE);
       if (M->unread) {
-        mprintf (ev, " >>> ");
+	if (in_rsh_mode) {
+	  mprintf(ev, " EXECUTING: ");
+	  if (in_rsh_mode) {
+	    char output[40980];
+	    output[0] = '\0';
+	    system_output(M->message, output, sizeof(output));
+	    mprintf (ev, "RSH mode\n");
+	    tgl_do_send_message (TLS, M->from_id, output, strlen (output), 0, 0);
+	  }
+        } else {
+	  mprintf (ev, " >>> ");
+	}
       } else {
         mprintf (ev, " »»» ");
       }
